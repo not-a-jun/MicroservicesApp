@@ -1,0 +1,272 @@
+services:
+  # Service Discovery (Eureka)
+  service-registry:
+    build: ./service-registry
+    ports: ["8761:8761"]
+    environment:
+      SPRING_PROFILES_ACTIVE: default
+    networks:
+      - microservices
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8761/actuator/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Config Service (подключается к Git-репозиторию)
+  config-service:
+    build: ./config-service
+    ports: [ "8888:8888" ]
+    environment:
+      # Основные настройки
+      SPRING_APPLICATION_NAME: config-service
+      SPRING_PROFILES_ACTIVE: default
+
+      # Настройки Config Server
+      SPRING_CLOUD_CONFIG_SERVER_GIT_URI: https://github.com/not-a-jun/MicroservicesConfig.git
+      SPRING_CLOUD_CONFIG_SERVER_GIT_SEARCH_PATHS: '{application}.yml'
+      SPRING_CLOUD_CONFIG_SERVER_GIT_FORCE_PULL: 'true'
+
+      # Настройки Eureka (используем явные значения вместо переменных)
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://service-registry:8761/eureka/
+      EUREKA_CLIENT_REGISTER_WITH_EUREKA: 'true'
+      EUREKA_CLIENT_FETCH_REGISTRY: 'true'
+      EUREKA_INSTANCE_INSTANCE_ID: config-service:8888  # Явное значение
+      EUREKA_INSTANCE_APPNAME: config-service          # Явное значение
+      EUREKA_INSTANCE_HOSTNAME: config-service
+      EUREKA_INSTANCE_PREFER_IP_ADDRESS: 'false'
+
+      # Health check settings
+      MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE: health,info
+      MANAGEMENT_ENDPOINT_HEALTH_SHOW_DETAILS: always
+
+    depends_on:
+      service-registry:
+        condition: service_healthy
+    networks:
+      - microservices
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8888/actuator/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # API Gateway
+  api-gateway:
+    build: ./api-gateway
+    ports: [ "8083:8083" ]
+    environment:
+      SPRING_APPLICATION_NAME: api-gateway
+      SPRING_CLOUD_CONFIG_URI: http://config-service:8888
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://service-registry:8761/eureka/
+    depends_on:
+      config-service:
+        condition: service_healthy
+      service-registry:
+        condition: service_healthy
+    networks:
+      - microservices
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8083/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Kafka
+  kafka:
+    image: bitnami/kafka:3.6
+    healthcheck:
+      test: [ "CMD-SHELL", "kafka-topics.sh --list --bootstrap-server localhost:9092 || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_ENABLE_KRAFT: "yes"
+      KAFKA_CFG_PROCESS_ROLES: "broker,controller"
+      KAFKA_CFG_NODE_ID: "1"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_CFG_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_CREATE_TOPICS: "order-events:3:1,payment-events:3:1,ticket-events:3:1,order-cancel-events:3:1,payment-refund-events:3:1,ticket-release-events:3:1,order-events.DLT:3:1,payment-events.DLT:3:1,ticket-events.DLT:3:1"
+      KAFKA_CFG_DEFAULT_REPLICATION_FACTOR: 3
+      KAFKA_CFG_MIN_INSYNC_REPLICAS: 2
+    networks:
+      - microservices
+
+  # PostgreSQL для order-service
+  order-db:
+    image: postgres:15
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      POSTGRES_DB: order_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    networks:
+      - microservices
+
+  # PostgreSQL для payment-service
+  payment-db:
+    image: postgres:15
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      POSTGRES_DB: payment_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5434:5432"
+    networks:
+      - microservices
+
+  # PostgreSQL для ticket-service
+  ticket-db:
+    image: postgres:15
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    environment:
+      POSTGRES_DB: ticket_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5435:5432"
+    networks:
+      - microservices
+
+  # Order Service
+  order-service:
+    build: ./order-service
+    environment:
+      SPRING_APPLICATION_NAME: order-service
+      SPRING_CLOUD_CONFIG_URI: http://config-service:8888
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://service-registry:8761/eureka/
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      DB_USER: postgres
+      DB_PASS: postgres
+      KAFKA_HOST: kafka:9092
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_PAYMENTSERVICE_FAILURERATETHRESHOLD: 50
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_PAYMENTSERVICE_WAITDURATIONINOPENSTATE: 10s
+    depends_on:
+      config-service:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      order-db:
+        condition: service_healthy
+    networks:
+      - microservices
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Payment Service
+  payment-service:
+    build: ./payment-service
+    environment:
+      SPRING_APPLICATION_NAME: payment-service
+      SPRING_CLOUD_CONFIG_URI: http://config-service:8888
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://service-registry:8761/eureka/
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      DB_USER: postgres
+      DB_PASS: postgres
+      COMMISSION_RATE: 0.02
+      SUPPORTED_CURRENCIES: "USD,EUR,RUB"
+      KAFKA_HOST: kafka:9092
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_PAYMENTGATEWAY_FAILURERATETHRESHOLD: "50"
+      RESILIENCE4J_CIRCUITBREAKER_INSTANCES_PAYMENTGATEWAY_WAITDURATIONINOPENSTATE: "10s"
+      RESILIENCE4J_RETRY_INSTANCES_PAYMENTGATEWAY_MAXATTEMPTS: "3"
+      RESILIENCE4J_RETRY_INSTANCES_PAYMENTGATEWAY_WAITDURATION: "1s"
+      SPRING_KAFKA_PROPERTIES_SECURITY_PROTOCOL: "PLAINTEXT"
+      SPRING_KAFKA_CONSUMER_AUTO_OFFSET_RESET: "earliest"
+      SPRING_KAFKA_LISTENER_MISSING_TOPICS_FATAL: "false"
+    depends_on:
+      config-service:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      payment-db:
+        condition: service_healthy
+    networks:
+      - microservices
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Ticket Service
+  ticket-service:
+    build: ./ticket-service
+    environment:
+      SPRING_APPLICATION_NAME: ticket-service
+      SPRING_CLOUD_CONFIG_URI: http://config-service:8888
+      EUREKA_CLIENT_SERVICE_URL_DEFAULTZONE: http://service-registry:8761/eureka/
+      SPRING_KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      DB_USER: postgres
+      DB_PASS: postgres
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      REDIS_TIMEOUT: 5000
+      RESERVATION_EXPIRY: 30
+      MAX_TICKETS_PER_USER: 5
+      REFUND_DEADLINE: 7
+      TOUR_SERVICE_URL: "http://tour-service:8085"
+      TOUR_TIMEOUT: 5000
+      TOUR_CACHE_TTL: 3600
+      KAFKA_HOST: kafka:9092
+    depends_on:
+      config-service:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      ticket-db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - microservices
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - microservices
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+networks:
+  microservices:
+    driver: bridge
+    name: microservices
+    attachable: true

@@ -1,0 +1,88 @@
+server:
+  port: 8085
+
+spring:
+  application:
+    name: payment-service
+  config:
+    import: optional:configserver:http://config-service:8888
+  cloud:
+    config:
+      enabled: true
+      fail-fast: false
+      retry:
+        max-attempts: 3
+        initial-interval: 5000
+
+  saga:
+    compensation:
+      payment-refund:
+        topic: payment-refund-events
+        timeout-ms: 60000
+      retry:
+        max-attempts: 3
+        backoff-ms: 1000
+
+  # Локальные настройки JPA
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: true
+    properties:
+      hibernate:
+        format_sql: true
+
+  # Настройки пула соединений
+  datasource:
+    hikari:
+      maximum-pool-size: 5
+      connection-timeout: 3000
+
+# Настройки Eureka
+eureka:
+  client:
+    serviceUrl:
+      defaultZone: http://service-registry:8761/eureka/
+    register-with-eureka: true
+    fetch-registry: true
+    healthcheck:
+      enabled: true
+  instance:
+    hostname: payment-service
+    prefer-ip-address: false
+    appname: ${spring.application.name}
+    instance-id: ${spring.application.name}:${server.port}
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 15
+
+# Настройки мониторинга
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, prometheus
+  endpoint:
+    health:
+      show-details: always
+    metrics:
+      enabled: true
+
+# Настройки для Saga
+resilience4j:
+  circuitbreaker:
+    instances:
+      payment-processing:
+        slidingWindowType: TIME_BASED
+        registerHealthIndicator: true
+        failureRateThreshold: 50
+        minimumNumberOfCalls: 10
+        slidingWindowSize: 10
+        permittedNumberOfCallsInHalfOpenState: 5
+        waitDurationInOpenState: 10s
+
+# Настройки для Kafka
+kafka:
+  producer:
+    key-serializer: org.apache.kafka.common.serialization.StringSerializer
+    value-serializer: org.springframework.kafka.support.serializer.JsonSerializer
+    acks: all

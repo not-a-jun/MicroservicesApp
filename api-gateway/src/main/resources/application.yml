@@ -1,0 +1,61 @@
+server:
+  port: 8083
+
+spring:
+  application:
+    name: api-gateway
+  config:
+    import: configserver:http://config-service:8888
+  cloud:
+    config:
+      fail-fast: false
+      retry:
+        max-attempts: 3
+        initial-interval: 5000
+    gateway:
+      discovery:
+        locator:
+          enabled: true
+          lower-case-service-id: true
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Origin
+      httpclient:
+        pool:
+          max-connections: 1000
+        connect-timeout: 1000
+        response-timeout: 5s
+
+eureka:
+  client:
+    register-with-eureka: true
+    fetch-registry: true
+    serviceUrl:
+      defaultZone: http://service-registry:8761/eureka/
+    healthcheck:
+      enabled: true
+  instance:
+    hostname: api-gateway
+    prefer-ip-address: false
+    appname: ${spring.application.name}
+    instance-id: ${spring.application.name}:${server.port}
+    lease-renewal-interval-in-seconds: 5
+    lease-expiration-duration-in-seconds: 15
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info, metrics, gateway
+  endpoint:
+    health:
+      show-details: always
+    gateway:
+      enabled: true
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      gateway:
+        failureRateThreshold: 50
+        minimumNumberOfCalls: 10
+        slidingWindowSize: 10
