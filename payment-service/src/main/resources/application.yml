@@ -5,11 +5,11 @@ spring:
   application:
     name: payment-service
   config:
-    import: optional:configserver:http://config-service:8888
+    import: configserver:http://config-service:8888
   cloud:
     config:
       enabled: true
-      fail-fast: false
+      fail-fast: true
       retry:
         max-attempts: 3
         initial-interval: 5000
@@ -26,7 +26,7 @@ spring:
   # Локальные настройки JPA
   jpa:
     hibernate:
-      ddl-auto: validate
+      ddl-auto: update
     show-sql: true
     properties:
       hibernate:

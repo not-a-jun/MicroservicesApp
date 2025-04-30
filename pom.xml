@@ -11,13 +11,13 @@
   <name>Microservices Parent</name>
 
   <modules>
+    <module>common</module>
     <module>service-registry</module>
     <module>api-gateway</module>
     <module>config-service</module>
     <module>order-service</module>
     <module>payment-service</module>
     <module>ticket-service</module>
-    <module>common</module>
   </modules>
 
   <parent>
